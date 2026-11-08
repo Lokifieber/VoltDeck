@@ -12,6 +12,21 @@ Choose a package from the [Releases page](../../releases).
 
 Cargo is only needed when building from source. The Early Access builds are unsigned, so Windows may display an unknown publisher prompt.
 
+## Screenshots
+
+![VoltDeck dashboard showing a driver update and the option to compare versions](assets/screenshots/dashboard.png)
+
+The dashboard and comparison use sample driver data.
+
+<details>
+<summary>Driver comparison and appearance settings</summary>
+
+![Side-by-side comparison of the installed driver and the offered update](assets/screenshots/comparison.png)
+
+![VoltDeck settings showing language choices, color themes, and credits](assets/screenshots/settings.png)
+
+</details>
+
 ## Drivers and recovery
 
 - **Check for updates** lists compatible packages offered by the Windows Update service configured on your PC. Driver cards distinguish the driver's reported date from the Windows Update catalog date.
