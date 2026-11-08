@@ -1,0 +1,23 @@
+name: Windows build
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Compile and test
+        run: cargo test --locked
+      - name: Build the desktop EXE with icon
+        run: ./build-desktop.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoltDeck-Windows-x64
+          path: target/release/VoltDeck.exe
+          if-no-files-found: error

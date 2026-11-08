@@ -1,0 +1,10 @@
+[package]
+name = "driver-tool"
+version = "0.3.0-alpha.1"
+edition = "2021"
+rust-version = "1.79"
+default-run = "driver-tool"
+
+[[bin]]
+name = "VoltDeck"
+path = "src/desktop.rs"
