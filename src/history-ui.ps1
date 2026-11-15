@@ -52,10 +52,13 @@ function Show-DriverHistory($owner) {
 
     $historyRoot = Join-Path $settingsDirectory 'history'
     $resultLabels = @{ running = 'Ergebnis offen'; success = 'Installiert'; reboot = 'Neustart erforderlich'; failed = 'Fehlgeschlagen'; imported = 'Paket importiert' }
-    if (Test-Path -LiteralPath $historyRoot) {
+    try { Assert-LocalPath $historyRoot } catch { $historyRoot = $null }
+    if ($historyRoot -and (Test-Path -LiteralPath $historyRoot)) {
         $entries.ItemsSource = @(Get-ChildItem -LiteralPath $historyRoot -Directory | ForEach-Object {
             try {
-                $entry = Get-Content -LiteralPath (Join-Path $_.FullName 'entry.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $recordPath = Join-Path $_.FullName 'entry.json'
+                Assert-LocalPath $recordPath
+                $entry = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $time = [datetimeoffset]::Parse($entry.Time)
                 $result = Get-Text $resultLabels[$entry.Result]
                 [pscustomobject] @{ Time = $time; Entry = $entry; Directory = $_.FullName; Label = "$($time.ToLocalTime().ToString('g', $uiCulture))  ·  $result  ·  $($entry.Name)" }
@@ -77,7 +80,9 @@ function Show-DriverHistory($owner) {
         $entry = $sender.SelectedItem.Entry
         $state.Details.IsEnabled = [bool] $entry.Comparison
         $state.Restore.IsEnabled = [bool] $entry.Backups
-        $state.Notice.Text = if ($entry.Error) { $entry.Error } elseif ($entry.Source) { $entry.Source } else { $sender.SelectedItem.Label }
+        $state.Notice.Text = if ($entry.Error) { $entry.Error } elseif ($entry.Source) { $entry.Source } elseif ($entry.RestorePoint) {
+            $sender.SelectedItem.Label + ' · Restore point #' + $entry.RestorePoint
+        } else { $sender.SelectedItem.Label }
     })
     $details.Add_Click({
         param($sender, $eventArgs)
@@ -91,7 +96,10 @@ function Show-DriverHistory($owner) {
         $row = $state.Entries.SelectedItem
         $paths = @(foreach ($backup in $row.Entry.Backups) {
             $path = if ([IO.Path]::IsPathRooted($backup)) { $backup } else { Join-Path $row.Directory $backup }
-            if (Test-Path -LiteralPath $path -PathType Leaf) { $path }
+            try {
+                Assert-LocalPath $path
+                if (Test-Path -LiteralPath $path -PathType Leaf) { $path }
+            } catch { Write-Verbose $_.Exception.Message }
         })
         if ($paths.Count -eq 1) { Request-DriverRestore $state.Dialog $paths[0] }
         elseif ($paths.Count) { Select-RestoreFile $state.Dialog (Split-Path -Parent $paths[0]) }
@@ -115,7 +123,8 @@ function Request-DriverRestore($dialog, [string] $file) {
         Request-Admin
         return
     }
-    $prompt = (Get-Text 'Dieses Treiberpaket aus der Sicherung importieren? Windows entscheidet, welcher Treiber aktiv wird.') + "`n`n$file"
+    $prompt = (Get-Text 'Dieses Treiberpaket aus der Sicherung importieren? Windows entscheidet, welcher Treiber aktiv wird.') + "`n`n" +
+        ('pnputil.exe /add-driver "' + $file + '" /install')
     if (Confirm-DriverInstall $dialog $prompt 'Wiederherstellen') {
         $dialog.Close()
         Start-Operation 'restore' (Get-Text 'Treiberpaket wird wiederhergestellt …') $null $file

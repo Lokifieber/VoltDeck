@@ -3,8 +3,9 @@
 use std::env;
 use std::io::Write;
 use std::os::windows::process::CommandExt;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+mod windows_shell;
 
 fn main() {
     if let Err(error) = launch() {
@@ -21,12 +22,12 @@ extern "system" {
 }
 
 fn launch() -> Result<(), String> {
-    let root = env::var_os("SystemRoot").ok_or("Windows-Systemordner fehlt.")?;
     let exe = env::current_exe().map_err(|error| error.to_string())?;
     let app_directory = exe.parent().ok_or("Programmordner fehlt.")?;
-    let shell = Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
     let script = concat!(
         "$backend = {\n",
+        include_str!("local-paths.ps1"),
+        "\n",
         include_str!("windows.ps1"),
         "\n}\n[xml] $layout = @'\n",
         include_str!("desktop.xaml"),
@@ -37,24 +38,29 @@ fn launch() -> Result<(), String> {
         "\n'@\n$taskbarSource = @'\n",
         include_str!("taskbar.cs"),
         "\n'@\n",
+        include_str!("local-paths.ps1"),
+        "\n",
         include_str!("settings.ps1"),
         "\n",
         include_str!("gaming.ps1"),
         "\n",
         include_str!("history-ui.ps1"),
         "\n",
+        include_str!("safety-ui.ps1"),
+        "\n",
+        include_str!("privacy-ui.ps1"),
+        "\n",
         include_str!("desktop.ps1")
     );
     let open_boost = env::args_os().nth(1).is_some_and(|arg| arg == "--boost");
-    let mut command = Command::new(shell);
-    command.env_remove("VOLTDECK_PORTABLE_DATA");
+    let mut command = windows_shell::powershell()?;
     if app_directory.join("portable.flag").is_file() {
         command.env("VOLTDECK_PORTABLE_DATA", app_directory.join("data"));
     }
     let mut child = command
         .args([
-            "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command",
-            "[Console]::InputEncoding = [Text.Encoding]::UTF8; [Console]::OutputEncoding = [Text.Encoding]::UTF8; & ([scriptblock]::Create([Console]::In.ReadToEnd()))",
+            "-STA", "-Command",
+            "$env:PSModulePath = Join-Path $PSHOME 'Modules'; [Console]::InputEncoding = [Text.Encoding]::UTF8; [Console]::OutputEncoding = [Text.Encoding]::UTF8; & ([scriptblock]::Create([Console]::In.ReadToEnd()))",
         ])
         .env("DRIVER_TOOL_EXE", exe)
         .env("DRIVER_TOOL_OPEN_BOOST", if open_boost { "1" } else { "0" })

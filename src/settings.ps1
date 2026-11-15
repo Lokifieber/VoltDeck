@@ -23,13 +23,25 @@ function Initialize-Settings($english, $additionalLocales) {
         sunset = @('#462738', '#2B2033', '#593529', '#FFB497')
         graphite = @('#252B38', '#1A202A', '#333B49', '#D7E1F2')
     }
-    $script:settings = @{ language = 'system'; theme = 'ocean'; gradient = $true }
+    $script:settings = @{
+        language = 'system'; theme = 'ocean'; gradient = $true; appearance = 'dark'
+        restorePoint = $true; protectCritical = $true; safeMode = $true
+        hideInbox = $true; pins = @(); planHours = 0; lastPlanCheck = ''
+    }
     try {
+        Assert-LocalPath $settingsPath
         if (Test-Path -LiteralPath $settingsPath) {
             $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($saved.language -is [string]) { $settings.language = $saved.language }
             if ($themes.Contains([string] $saved.theme)) { $settings.theme = $saved.theme }
             if ($saved.gradient -is [bool]) { $settings.gradient = $saved.gradient }
+            if ($saved.appearance -in 'auto','light','dark') { $settings.appearance = $saved.appearance }
+            foreach ($key in 'restorePoint','protectCritical','safeMode','hideInbox') {
+                if ($saved.$key -is [bool]) { $settings[$key] = $saved.$key }
+            }
+            $settings.pins = @($saved.pins | Where-Object { $_ -is [string] -and $_ })
+            if ($saved.planHours -in 24,168) { $settings.planHours = [int] $saved.planHours }
+            if ($saved.lastPlanCheck -is [string]) { $settings.lastPlanCheck = $saved.lastPlanCheck }
         }
     } catch { Write-Verbose $_.Exception.Message }
 
@@ -42,9 +54,11 @@ function Initialize-Settings($english, $additionalLocales) {
     }
     if ($env:DRIVER_TOOL_EXE) {
         $localeDirectory = Join-Path (Split-Path -Parent $env:DRIVER_TOOL_EXE) 'locales'
-        if (Test-Path -LiteralPath $localeDirectory) {
+        try { Assert-LocalPath $localeDirectory } catch { $localeDirectory = $null }
+        if ($localeDirectory -and (Test-Path -LiteralPath $localeDirectory)) {
             foreach ($file in Get-ChildItem -LiteralPath $localeDirectory -Filter '*.json' -File) {
                 try {
+                    Assert-LocalPath $file.FullName
                     $culture = [Globalization.CultureInfo]::GetCultureInfo($file.BaseName)
                     $locale = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
                     if ($locale.name -is [string] -and $locale.name.Trim() -and $locale.strings) { $languages[$culture.Name] = $locale }
@@ -75,32 +89,81 @@ function Initialize-Settings($english, $additionalLocales) {
     }
 }
 
+function Save-ToolSettings($preferences) {
+    Assert-LocalPath $settingsPath
+    [void] [IO.Directory]::CreateDirectory($settingsDirectory)
+    $temporary = Join-Path $settingsDirectory ('.settings-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        [IO.File]::WriteAllText($temporary, (ConvertTo-Json -InputObject $preferences -Depth 4), [Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $settingsPath) { [IO.File]::Replace($temporary, $settingsPath, [NullString]::Value) }
+        else { [IO.File]::Move($temporary, $settingsPath) }
+    } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+    $script:settings = $preferences
+}
+
+function Get-ToolAppearance {
+    if ($settings.appearance -ne 'auto') { return $settings.appearance }
+    try {
+        $value = Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme
+        if ($value -eq 0) { return 'dark' }
+    } catch { Write-Verbose $_.Exception.Message }
+    return 'light'
+}
+
+function Open-ExternalPage([string] $address) {
+    if ($isAdmin) {
+        [void] [Windows.MessageBox]::Show((Get-Text 'Öffne externe Links aus einem normalen VoltDeck-Fenster.'), 'VoltDeck')
+        return
+    }
+    if (Confirm-DriverInstall $window ((Get-Text 'Dieser Link öffnet deinen Browser. Die Zielseite und der Browser unterliegen ihren eigenen Datenschutzeinstellungen.') +
+        [Environment]::NewLine + $address) 'Im Browser öffnen' 'Externer Link') {
+        try { Start-Process -FilePath $address } catch { $status.Text = $_.Exception.Message }
+    }
+}
+
 function Open-Discord {
-    try { Start-Process 'https://discord.gg/8JGu5Ecerh' }
-    catch { $status.Text = $_.Exception.Message }
+    Open-ExternalPage 'https://discord.gg/8JGu5Ecerh'
 }
 
 function Set-ToolTheme($owner, $preferences) {
     $palette = $themes[$preferences.theme]
     $converter = [Windows.Media.BrushConverter]::new()
     $accent = [Windows.Media.ColorConverter]::ConvertFromString($palette[3])
-    foreach ($surface in @{ ThemeBase = 0.045; ThemeSurface = 0.085; ThemeControl = 0.15; ThemeBorder = 0.28; ThemeSelected = 0.34 }.GetEnumerator()) {
+    $script:activeAppearance = Get-ToolAppearance
+    $light = $activeAppearance -eq 'light'
+    foreach ($surface in @{ ThemeBase = 0.015; ThemeSurface = 0.065; ThemeControl = 0.105; ThemeBorder = 0.16; ThemeSelected = 0.25 }.GetEnumerator()) {
         $factor = $surface.Value
-        $color = [Windows.Media.Color]::FromRgb(
-            [byte] (9 + $accent.R * $factor), [byte] (10 + $accent.G * $factor), [byte] (18 + $accent.B * $factor))
+        $color = if ($light) {
+            [Windows.Media.Color]::FromRgb([byte] (255 - (255 - $accent.R * 0.62) * $factor),
+                [byte] (255 - (255 - $accent.G * 0.62) * $factor), [byte] (255 - (255 - $accent.B * 0.62) * $factor))
+        } else {
+            [Windows.Media.Color]::FromRgb([byte] (5 + $accent.R * $factor), [byte] (6 + $accent.G * $factor), [byte] (8 + $accent.B * $factor))
+        }
         $owner.Resources[$surface.Key] = [Windows.Media.SolidColorBrush]::new($color)
     }
     $owner.Resources['ThemeAccent'] = [Windows.Media.SolidColorBrush]::new($accent)
+    $owner.Resources['BackdropOpacity'] = if (-not $preferences.gradient) { 0.0 } elseif ($light) { 0.18 } else { 0.92 }
+    $owner.Resources['ThemeText'] = $converter.ConvertFromString($(if ($light) { '#172336' } else { '#F3F6FD' }))
+    $owner.Resources['ThemeMuted'] = $converter.ConvertFromString($(if ($light) { '#44536A' } else { '#B7C7E2' }))
+    $owner.Resources['ThemeHeading'] = if ($light) {
+        [Windows.Media.SolidColorBrush]::new([Windows.Media.Color]::FromRgb([byte] ($accent.R * 0.29), [byte] ($accent.G * 0.29), [byte] ($accent.B * 0.29)))
+    } else { $owner.Resources['ThemeAccent'] }
     if ($preferences.gradient) {
         $gradient = [Windows.Media.LinearGradientBrush]::new()
         $gradient.StartPoint = [Windows.Point]::new(0, 0)
         $gradient.EndPoint = [Windows.Point]::new(1, 1)
         for ($i = 0; $i -lt 3; $i++) {
-            $gradient.GradientStops.Add([Windows.Media.GradientStop]::new([Windows.Media.ColorConverter]::ConvertFromString($palette[$i]), $i / 2.0))
+            $stop = [Windows.Media.ColorConverter]::ConvertFromString($palette[$i])
+            $stop = if ($light) {
+                [Windows.Media.Color]::FromRgb([byte] (225 + $stop.R * 0.39), [byte] (225 + $stop.G * 0.39), [byte] (225 + $stop.B * 0.39))
+            } else {
+                [Windows.Media.Color]::FromRgb([byte] (7 + $stop.R * 0.56), [byte] (8 + $stop.G * 0.56), [byte] (10 + $stop.B * 0.56))
+            }
+            $gradient.GradientStops.Add([Windows.Media.GradientStop]::new($stop, $i / 2.0))
         }
         $owner.Resources['ThemeHero'] = $gradient
     } else {
-        $owner.Resources['ThemeHero'] = $converter.ConvertFromString($palette[0])
+        $owner.Resources['ThemeHero'] = $owner.Resources['ThemeSurface']
     }
 }
 
@@ -118,7 +181,7 @@ function Add-SettingsCard($panel, [string] $title) {
     $heading = Add-ToolText $content $title
     $heading.FontSize = 16
     $heading.FontWeight = 'SemiBold'
-    $heading.SetResourceReference([Windows.Controls.TextBlock]::ForegroundProperty, 'ThemeAccent')
+    $heading.SetResourceReference([Windows.Controls.TextBlock]::ForegroundProperty, 'ThemeHeading')
     return $content
 }
 
@@ -166,6 +229,13 @@ function Show-Settings($owner) {
     $gradient.IsChecked = $settings.gradient
     $gradient.Margin = '5,10,0,2'
     [void] $themeCard.Children.Add($gradient)
+    $appearance = New-SettingsPicker $themeCard $owner
+    $appearance.ItemsSource = @(
+        [pscustomobject] @{ Key = 'auto'; Label = (Get-Text 'Windows-Design') }
+        [pscustomobject] @{ Key = 'light'; Label = (Get-Text 'Hell') }
+        [pscustomobject] @{ Key = 'dark'; Label = (Get-Text 'Dunkel') }
+    )
+    $appearance.SelectedValue = $settings.appearance
     $credits = Add-SettingsCard $panel 'Credits'
     $names = Add-ToolText $credits 'LokiFieber  +  OpenAI Codex'
     $names.FontSize = 20
@@ -176,22 +246,19 @@ function Show-Settings($owner) {
     $buttons = [Windows.Controls.WrapPanel]::new()
     [void] $panel.Children.Add($buttons)
     $save = Add-ToolButton $buttons $owner 'Speichern'
-    $save.Tag = @{ Language = $languagePicker; Theme = $themePicker; Gradient = $gradient; Owner = $owner; Notice = $notice }
+    $save.Tag = @{ Language = $languagePicker; Theme = $themePicker; Gradient = $gradient; Appearance = $appearance; Owner = $owner; Notice = $notice }
     $save.Foreground = '#081B22'
     $save.SetResourceReference([Windows.Controls.Control]::BackgroundProperty, 'ThemeAccent')
     $save.Add_Click({
         param($sender, $eventArgs)
         $controls = $sender.Tag
-        $newSettings = @{ language = [string] $controls.Language.SelectedValue; theme = [string] $controls.Theme.SelectedValue; gradient = [bool] $controls.Gradient.IsChecked }
+        $newSettings = $settings.Clone()
+        $newSettings.language = [string] $controls.Language.SelectedValue
+        $newSettings.theme = [string] $controls.Theme.SelectedValue
+        $newSettings.gradient = [bool] $controls.Gradient.IsChecked
+        $newSettings.appearance = [string] $controls.Appearance.SelectedValue
         try {
-            [void] [IO.Directory]::CreateDirectory($settingsDirectory)
-            $temporary = Join-Path $settingsDirectory ('.settings-' + [guid]::NewGuid().ToString('N') + '.tmp')
-            try {
-                [IO.File]::WriteAllText($temporary, (ConvertTo-Json -InputObject $newSettings), [Text.UTF8Encoding]::new($false))
-                if (Test-Path -LiteralPath $settingsPath) { [IO.File]::Replace($temporary, $settingsPath, [NullString]::Value) }
-                else { [IO.File]::Move($temporary, $settingsPath) }
-            } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
-            $script:settings = $newSettings
+            Save-ToolSettings $newSettings
             Set-ToolTheme $controls.Owner $settings
             $controls.Notice.Text = Get-Text 'Gespeichert. Eine Sprachänderung wird beim nächsten Start wirksam.'
         } catch { $controls.Notice.Text = $_.Exception.Message }

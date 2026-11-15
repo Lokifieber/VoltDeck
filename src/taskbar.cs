@@ -1,5 +1,21 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+
+public static class VoltDeckDriverStore {
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern bool SetupGetInfDriverStoreLocationW(string inf, IntPtr platform, IntPtr locale,
+        StringBuilder buffer, uint length, out uint required);
+
+    public static string Find(string inf) {
+        uint size;
+        SetupGetInfDriverStoreLocationW(inf, IntPtr.Zero, IntPtr.Zero, null, 0, out size);
+        if (size == 0 || size > 32768) return null;
+        var buffer = new StringBuilder((int)size);
+        return SetupGetInfDriverStoreLocationW(inf, IntPtr.Zero, IntPtr.Zero, buffer, size, out size)
+            ? buffer.ToString() : null;
+    }
+}
 
 public static class VoltDeckTaskbar {
     private const string AppId = "LokiFieber.VoltDeck";

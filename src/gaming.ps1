@@ -1,7 +1,7 @@
 function New-ToolDialog($owner, [string] $title) {
     [xml] $markup = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent" Foreground="#EDF3FF"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" Foreground="{DynamicResource ThemeText}"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" Width="590" SizeToContent="Height"
         ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="14">
     <Border Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="21" Padding="20">
@@ -32,7 +32,7 @@ function New-ToolDialog($owner, [string] $title) {
 function Add-ToolText($panel, [string] $text) {
     $block = [Windows.Controls.TextBlock]::new()
     $block.Text = Get-Text $text
-    $block.Foreground = '#B7C7E2'
+    $block.SetResourceReference([Windows.Controls.TextBlock]::ForegroundProperty, 'ThemeMuted')
     $block.TextWrapping = 'Wrap'
     $block.Margin = '0,0,0,11'
     [void] $panel.Children.Add($block)
@@ -48,8 +48,8 @@ function Add-ToolButton($panel, $owner, [string] $label) {
     return $button
 }
 
-function Confirm-DriverInstall($owner, [string] $prompt, [string] $action = 'Installieren') {
-    $dialog = New-ToolDialog $owner 'Installation bestätigen'
+function Confirm-DriverInstall($owner, [string] $prompt, [string] $action = 'Installieren', [string] $title = 'Installation bestätigen') {
+    $dialog = New-ToolDialog $owner $title
     $panel = $dialog.FindName('Content')
     [void] (Add-ToolText $panel $prompt)
     $buttons = [Windows.Controls.WrapPanel]::new()
@@ -76,20 +76,14 @@ function Show-Gaming($owner, $autoTimer, [bool] $canInstall) {
     foreach ($label in $links.Keys) {
         $button = Add-ToolButton $panel $owner $label
         $button.Tag = $links[$label]
-        $button.Add_Click({ param($sender, $eventArgs) Start-Process $sender.Tag })
+        $button.Add_Click({ param($sender, $eventArgs) Open-ExternalPage $sender.Tag })
     }
-    $auto = [Windows.Controls.CheckBox]::new()
-    $auto.Content = Get-Text 'Game-Ready-Updates automatisch installieren'
-    $auto.Foreground = '#EDF3FF'
-    $auto.Margin = '0,10,0,8'
+    $auto = Add-VoltCheck $panel $owner 'Game-Ready-Updates automatisch installieren' $autoTimer.IsEnabled
     $auto.IsEnabled = $canInstall
-    $auto.IsChecked = $autoTimer.IsEnabled
-    $auto.Add_Checked({ $autoTimer.Start() })
-    $auto.Add_Unchecked({ $autoTimer.Stop() })
-    [void] $panel.Children.Add($auto)
-    $autoNote = 'Solange VoltDeck geöffnet ist, prüft es alle 30 Minuten Windows Update, wenn das Hauptfenster aktiv ist. Die Installation setzt eine eindeutige NVIDIA-Game-Ready-Kennzeichnung und eine bereits akzeptierte Lizenz voraus.'
-    [void] (Add-ToolText $panel $autoNote)
-    if (-not $canInstall) { [void] (Add-ToolText $panel 'Öffne VoltDeck als Administrator, um die Option zu aktivieren.') }
+    $auto.Tag = $autoTimer
+    $auto.Add_Checked({ param($sender) $sender.Tag.Start() })
+    $auto.Add_Unchecked({ param($sender) $sender.Tag.Stop() })
+    [void] (Add-ToolText $panel 'Die automatische Installation benötigt Administratorrechte und einen ausgeschalteten Testmodus. Die Sperre für kritische Treiber gilt auch hier.')
     [void] $dialog.ShowDialog()
 }
 
@@ -100,7 +94,7 @@ function Show-Boost($owner) {
     $apps = [Windows.Controls.ListBox]::new()
     $apps.Height = 218
     $apps.SetResourceReference([Windows.Controls.Control]::BackgroundProperty, 'ThemeBase')
-    $apps.Foreground = '#EDF3FF'
+    $apps.SetResourceReference([Windows.Controls.Control]::ForegroundProperty, 'ThemeText')
     $apps.ItemContainerStyle = $owner.FindResource([Windows.Controls.ListBoxItem])
     $apps.SelectionMode = 'Extended'
     $apps.DisplayMemberPath = 'Label'
